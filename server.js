@@ -79,7 +79,10 @@ io.on('connection', (socket) => {
       socketId: socket.id
     };
 
-    room.players.push(player);
+    // Check if player already in room
+    if (!room.players.find(p => p.id === socket.id)) {
+      room.players.push(player);
+    }
     players.set(socket.id, { roomCode, player });
 
     socket.join(roomCode);
@@ -110,7 +113,7 @@ io.on('connection', (socket) => {
     room.votes = {};
 
     // Start timer
-    room.timeLeft = 300;
+    room.timeLeft = 30;
     if (room.timer) clearInterval(room.timer);
     room.timer = setInterval(() => {
       room.timeLeft--;

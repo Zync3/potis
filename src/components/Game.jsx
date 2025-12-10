@@ -23,7 +23,7 @@ const Game = ({ roomCode, onGameEnd }) => {
       setCurrentWord(data.currentWord);
       setGameState(data.gameState);
       setCurrentPlayer(data.currentPlayer);
-      setTimeLeft(300);
+      setTimeLeft(30);
     });
 
     // Timer update

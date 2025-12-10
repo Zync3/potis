@@ -30,11 +30,16 @@ const Lobby = ({ onStartGame }) => {
       setError('Room is full! Maximum 2 players allowed.');
     });
 
+    socket.on('game-started', (data) => {
+      onStartGame(roomCode);
+    });
+
     return () => {
       socket.off('connect');
       socket.off('disconnect');
       socket.off('room-update');
       socket.off('room-full');
+      socket.off('game-started');
     };
   }, []);
 
