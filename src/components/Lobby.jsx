@@ -7,6 +7,7 @@ const Lobby = ({ onStartGame }) => {
   const [players, setPlayers] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState('');
+  const [joined, setJoined] = useState(false);
 
   useEffect(() => {
     const ablyConnection = getAblyConnection();
@@ -28,7 +29,7 @@ const Lobby = ({ onStartGame }) => {
   }, []);
 
   useEffect(() => {
-    if (!roomCode) return;
+    if (!joined || !roomCode) return;
 
     const channel = getChannel(roomCode);
 
@@ -61,13 +62,14 @@ const Lobby = ({ onStartGame }) => {
       channel.presence.unsubscribe('leave');
       channel.unsubscribe('game-started');
     };
-  }, [roomCode, playerName, onStartGame]);
+  }, [joined, roomCode, playerName, onStartGame]);
 
   console.log("test ");
   
   const generateRoomCode = () => {
     const code = Math.floor(1000 + Math.random() * 9000).toString();
     setRoomCode(code);
+    setJoined(true);
     setError('');
   };
 
@@ -78,7 +80,7 @@ const Lobby = ({ onStartGame }) => {
     }
 
     if (roomCode.length === 4 && playerName.trim()) {
-      // Presence enter is handled in useEffect
+      setJoined(true);
       setError('');
     } else {
       setError('Please enter a valid 4-digit room code and your name.');
