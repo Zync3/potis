@@ -1,28 +1,15 @@
-import io from 'socket.io-client';
+import { Realtime } from 'ably';
 
-const SERVER_URL = process.env.NODE_ENV === 'production'
-  ? (process.env.REACT_APP_BACKEND_URL || window.location.origin)
-  : 'http://localhost:3001';
+const ably = new Realtime({ key: import.meta.env.VITE_ABLY_KEY });
 
-let socket = null;
-
-export const initSocket = () => {
-  if (!socket) {
-    socket = io(SERVER_URL);
-  }
-  return socket;
+export const getChannel = (roomCode) => {
+  return ably.channels.get(`room-${roomCode}`);
 };
 
-export const getSocket = () => {
-  if (!socket) {
-    socket = initSocket();
-  }
-  return socket;
+export const getAblyConnection = () => {
+  return ably.connection;
 };
 
-export const disconnectSocket = () => {
-  if (socket) {
-    socket.disconnect();
-    socket = null;
-  }
+export const disconnectAbly = () => {
+  ably.close();
 };

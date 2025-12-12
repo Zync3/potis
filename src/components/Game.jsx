@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getSocket } from '../utils/socket';
+import { getChannel, getAblyConnection } from '../utils/socket';
 
 const Game = ({ roomCode, onGameEnd }) => {
   const [gameState, setGameState] = useState('waiting'); // waiting, describing, voting, ended
@@ -12,39 +12,45 @@ const Game = ({ roomCode, onGameEnd }) => {
   const [isImpostor, setIsImpostor] = useState(false);
   const [descriptions, setDescriptions] = useState({});
   const [currentDescription, setCurrentDescription] = useState('');
+  const [isHost, setIsHost] = useState(false);
 
   useEffect(() => {
-    const socket = getSocket();
+    const channel = getChannel(roomCode);
 
     // Game started event
-    socket.on('game-started', (data) => {
+    channel.subscribe('game-started', (message) => {
+      const data = message.data;
       setPlayers(data.players);
-      setIsImpostor(data.isImpostor);
+      const myPlayer = data.players.find(p => p.id === getAblyConnection().id);
+      setIsImpostor(myPlayer ? myPlayer.isImpostor : false);
       setCurrentWord(data.currentWord);
       setGameState(data.gameState);
       setCurrentPlayer(data.currentPlayer);
       setTimeLeft(30);
+      setIsHost(data.hostId === getAblyConnection().id);
     });
 
     // Timer update
-    socket.on('timer-update', (time) => {
-      setTimeLeft(time);
+    channel.subscribe('timer-update', (message) => {
+      setTimeLeft(message.data);
     });
 
     // Description submitted
-    socket.on('description-submitted', (data) => {
+    channel.subscribe('description-submitted', (message) => {
+      const data = message.data;
       setDescriptions(data.descriptions);
       setCurrentPlayer(data.currentPlayer);
       setGameState(data.gameState);
     });
 
     // Vote submitted
-    socket.on('vote-submitted', (votes) => {
-      setVotes(votes);
+    channel.subscribe('vote-submitted', (message) => {
+      setVotes(message.data);
     });
 
     // Game state change
-    socket.on('game-state-change', (data) => {
+    channel.subscribe('game-state-change', (message) => {
+      const data = message.data;
       setGameState(data.gameState);
       if (data.descriptions) {
         setDescriptions(data.descriptions);
@@ -52,7 +58,8 @@ const Game = ({ roomCode, onGameEnd }) => {
     });
 
     // Game ended
-    socket.on('game-ended', (data) => {
+    channel.subscribe('game-ended', (message) => {
+      const data = message.data;
       setImpostor(data.impostor);
       setVotes(data.votes);
       setDescriptions(data.descriptions);
@@ -61,26 +68,84 @@ const Game = ({ roomCode, onGameEnd }) => {
     });
 
     // Player disconnected
-    socket.on('player-disconnected', (updatedPlayers) => {
-      setPlayers(updatedPlayers);
+    channel.presence.subscribe('leave', async () => {
+      const members = await channel.presence.get();
+      const playersList = members.map(m => ({ id: m.clientId, name: m.data }));
+      setPlayers(playersList);
     });
 
     return () => {
-      socket.off('game-started');
-      socket.off('timer-update');
-      socket.off('description-submitted');
-      socket.off('vote-submitted');
-      socket.off('game-state-change');
-      socket.off('game-ended');
-      socket.off('player-disconnected');
+      channel.unsubscribe('game-started');
+      channel.unsubscribe('timer-update');
+      channel.unsubscribe('description-submitted');
+      channel.unsubscribe('vote-submitted');
+      channel.unsubscribe('game-state-change');
+      channel.unsubscribe('game-ended');
+      channel.presence.unsubscribe('leave');
     };
-  }, [onGameEnd]);
+  }, [roomCode, onGameEnd]);
+
+  useEffect(() => {
+    if (!isHost) return;
+
+    const channel = getChannel(roomCode);
+    const collectedDescriptions = {};
+    const collectedVotes = {};
+
+    const handleSubmitDescription = (message) => {
+      const { description } = message.data;
+      const playerId = message.clientId;
+      collectedDescriptions[playerId] = description;
+
+      if (Object.keys(collectedDescriptions).length === players.length) {
+        // All submitted, move to voting
+        setGameState('voting');
+        channel.publish('game-state-change', {
+          gameState: 'voting',
+          descriptions: collectedDescriptions
+        });
+      }
+    };
+
+    const handleSubmitVote = (message) => {
+      const { votedPlayerId } = message.data;
+      const voterId = message.clientId;
+      collectedVotes[voterId] = votedPlayerId;
+
+      if (Object.keys(collectedVotes).length === players.length) {
+        // All voted, calculate winner
+        const voteCounts = {};
+        Object.values(collectedVotes).forEach(id => {
+          voteCounts[id] = (voteCounts[id] || 0) + 1;
+        });
+        const maxVotes = Math.max(...Object.values(voteCounts));
+        const votedOut = Object.keys(voteCounts).find(id => voteCounts[id] === maxVotes);
+        const impostorCaught = votedOut === impostor;
+
+        channel.publish('game-ended', {
+          impostor,
+          votes: collectedVotes,
+          descriptions: collectedDescriptions,
+          impostorCaught
+        });
+      } else {
+        channel.publish('vote-submitted', collectedVotes);
+      }
+    };
+
+    channel.subscribe('submit-description', handleSubmitDescription);
+    channel.subscribe('submit-vote', handleSubmitVote);
+
+    return () => {
+      channel.unsubscribe('submit-description', handleSubmitDescription);
+      channel.unsubscribe('submit-vote', handleSubmitVote);
+    };
+  }, [isHost, players.length, roomCode, impostor]);
 
   const submitDescription = () => {
     if (currentDescription.trim()) {
-      const socket = getSocket();
-      socket.emit('submit-description', {
-        roomCode,
+      const channel = getChannel(roomCode);
+      channel.publish('submit-description', {
         description: currentDescription.trim()
       });
       setCurrentDescription('');
@@ -88,9 +153,8 @@ const Game = ({ roomCode, onGameEnd }) => {
   };
 
   const voteForPlayer = (playerId) => {
-    const socket = getSocket();
-    socket.emit('submit-vote', {
-      roomCode,
+    const channel = getChannel(roomCode);
+    channel.publish('submit-vote', {
       votedPlayerId: playerId
     });
   };
@@ -152,7 +216,7 @@ const Game = ({ roomCode, onGameEnd }) => {
           <div className="descriptions-review">
             <h4>All Descriptions:</h4>
             {Object.entries(descriptions).map(([playerId, desc]) => {
-              const player = players.find(p => p.socketId === playerId);
+              const player = players.find(p => p.id === playerId);
               return (
                 <div key={playerId} className="description-item">
                   <strong>{player?.name}:</strong> {desc}
@@ -164,11 +228,11 @@ const Game = ({ roomCode, onGameEnd }) => {
           <div className="vote-buttons">
             {players.map(player => (
               <button
-                key={player.socketId}
-                onClick={() => voteForPlayer(player.socketId)}
+                key={player.id}
+                onClick={() => voteForPlayer(player.id)}
                 className="vote-button"
               >
-                Vote for {player.name} ({votes[player.socketId] || 0} votes)
+                Vote for {player.name} ({votes[player.id] || 0} votes)
               </button>
             ))}
           </div>
@@ -179,7 +243,7 @@ const Game = ({ roomCode, onGameEnd }) => {
         <h3>Players ({players.length}):</h3>
         <ul>
           {players.map(player => (
-            <li key={player.socketId}>{player.name}</li>
+            <li key={player.id}>{player.name}</li>
           ))}
         </ul>
       </div>

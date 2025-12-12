@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { initSocket, getSocket } from '../utils/socket';
+import { getChannel, getAblyConnection } from '../utils/socket';
 
 const Lobby = ({ onStartGame }) => {
   const [roomCode, setRoomCode] = useState('');
@@ -9,39 +9,59 @@ const Lobby = ({ onStartGame }) => {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const socket = initSocket();
+    const ablyConnection = getAblyConnection();
 
-    socket.on('connect', () => {
+    ablyConnection.on('connected', () => {
       setIsConnected(true);
-      console.log('Connected to server');
+      console.log('Connected to Ably');
     });
 
-    socket.on('disconnect', () => {
+    ablyConnection.on('disconnected', () => {
       setIsConnected(false);
-      console.log('Disconnected from server');
+      console.log('Disconnected from Ably');
     });
 
-    socket.on('room-update', (data) => {
-      setPlayers(data.players);
-      setError('');
+    return () => {
+      ablyConnection.off('connected');
+      ablyConnection.off('disconnected');
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!roomCode) return;
+
+    const channel = getChannel(roomCode);
+
+    channel.presence.enter(playerName.trim());
+
+    channel.presence.subscribe('enter', async () => {
+      const members = await channel.presence.get();
+      const playersList = members.map(m => ({ id: m.clientId, name: m.data }));
+      setPlayers(playersList);
+      if (playersList.length > 2) {
+        setError('Room is full! Maximum 2 players allowed.');
+      } else {
+        setError('');
+      }
     });
 
-    socket.on('room-full', () => {
-      setError('Room is full! Maximum 2 players allowed.');
+    channel.presence.subscribe('leave', async () => {
+      const members = await channel.presence.get();
+      const playersList = members.map(m => ({ id: m.clientId, name: m.data }));
+      setPlayers(playersList);
     });
 
-    socket.on('game-started', (data) => {
+    channel.subscribe('game-started', () => {
       onStartGame(roomCode);
     });
 
     return () => {
-      socket.off('connect');
-      socket.off('disconnect');
-      socket.off('room-update');
-      socket.off('room-full');
-      socket.off('game-started');
+      channel.presence.leave();
+      channel.presence.unsubscribe('enter');
+      channel.presence.unsubscribe('leave');
+      channel.unsubscribe('game-started');
     };
-  }, []);
+  }, [roomCode, playerName, onStartGame]);
 
   console.log("test ");
   
@@ -53,16 +73,12 @@ const Lobby = ({ onStartGame }) => {
 
   const joinRoom = () => {
     if (!isConnected) {
-      setError('Not connected to server. Please wait...');
+      setError('Not connected to Ably. Please wait...');
       return;
     }
 
     if (roomCode.length === 4 && playerName.trim()) {
-      const socket = getSocket();
-      socket.emit('join-room', {
-        roomCode: roomCode,
-        playerName: playerName.trim()
-      });
+      // Presence enter is handled in useEffect
       setError('');
     } else {
       setError('Please enter a valid 4-digit room code and your name.');
@@ -71,8 +87,25 @@ const Lobby = ({ onStartGame }) => {
 
   const startGame = () => {
     if (players.length >= 2) {
-      const socket = getSocket();
-      socket.emit('start-game', roomCode);
+      const channel = getChannel(roomCode);
+      const hostId = getAblyConnection().id;
+
+      // Generate game data
+      const impostorIndex = Math.floor(Math.random() * players.length);
+      const impostor = players[impostorIndex].id;
+      const currentWord = 'test word'; // Replace with word generator
+      const gamePlayers = players.map(player => ({
+        ...player,
+        isImpostor: player.id === impostor
+      }));
+
+      channel.publish('game-started', {
+        hostId,
+        players: gamePlayers,
+        currentWord,
+        gameState: 'describing',
+        currentPlayer: 0
+      });
     }
   };
 
@@ -82,7 +115,7 @@ const Lobby = ({ onStartGame }) => {
 
       <div className="connection-status">
         <span className={isConnected ? 'connected' : 'disconnected'}>
-          {isConnected ? '🟢 Connected' : '🔴 Connecting...'}
+          {isConnected ? '🟢 Connected to Ably' : '🔴 Connecting to Ably...'}
         </span>
       </div>
 

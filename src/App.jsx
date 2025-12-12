@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import Lobby from './components/Lobby'
 import Game from './components/Game'
 import Results from './components/Results'
-import { getSocket } from './utils/socket'
+import { getChannel } from './utils/socket'
 import './App.css'
 
 function App() {
@@ -11,19 +11,21 @@ function App() {
   const [gameResults, setGameResults] = useState(null)
 
   useEffect(() => {
-    const socket = getSocket();
+    if (!roomCode) return;
+
+    const channel = getChannel(roomCode);
 
     // Game restarted
-    socket.on('game-restarted', () => {
+    channel.subscribe('game-restarted', () => {
       setGameState('lobby');
       setRoomCode('');
       setGameResults(null);
     });
 
     return () => {
-      socket.off('game-restarted');
+      channel.unsubscribe('game-restarted');
     };
-  }, []);
+  }, [roomCode]);
 
   const handleStartGame = (code) => {
     setRoomCode(code)
@@ -36,8 +38,8 @@ function App() {
   }
 
   const handleRestart = () => {
-    const socket = getSocket();
-    socket.emit('restart-game', roomCode);
+    const channel = getChannel(roomCode);
+    channel.publish('game-restarted');
   }
 
   return (
